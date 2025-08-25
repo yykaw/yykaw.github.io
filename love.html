@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我们的爱心互动</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #190a28; /* 深紫背景，和原程序一致 */
+            overflow: hidden;
+            font-family: "PingFang SC", "微软雅黑", sans-serif;
+        }
+        /* 爱心画布 */
+        #heartCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+        /* 回答记录面板（右侧固定） */
+        #answerRecord {
+            position: fixed; top: 0; right: 0;
+            width: 300px; height: 100%;
+            background: rgba(30,15,50,0.9);
+            color: #fffacd; /* 米黄色文字 */
+            padding: 20px;
+            overflow-y: auto;
+            border-left: 2px solid #ff69b4;
+        }
+        #answerRecord h3 {
+            text-align: center;
+            color: #ffb6c1;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed #ff69b4;
+        }
+        .record-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+        }
+        .record-question { color: #ffd700; font-weight: bold; } /* 亮黄色问题 */
+        .record-answer { color: #f0f8ff; margin-top: 5px; }
+        /* 操作提示 */
+        #tips {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            font-size: 14px;
+            background: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+        /* 反馈文字 */
+        #feedback {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffff00; /* 亮黄色反馈 */
+            font-size: 18px;
+            text-align: center;
+            max-width: 500px;
+            padding: 15px;
+            background: rgba(0,0,0,0.6);
+            border-radius: 10px;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+<!-- 爱心动画画布 -->
+<canvas id="heartCanvas"></canvas>
+<!-- 回答记录面板 -->
+<div id="answerRecord">
+    <h3>我们的甜蜜回忆</h3>
+    <div id="recordList"></div>
+</div>
+<!-- 操作提示 -->
+<div id="tips">点击屏幕触发问答 | 长按更换背景色 | 右滑隐藏记录</div>
+<!-- 反馈文字 -->
+<div id="feedback"></div>
+
+<script>
+    // 1. 基础配置
+    const canvas = document.getElementById('heartCanvas');
+    const ctx = canvas.getContext('2d');
+    const answerRecord = document.getElementById('recordList');
+    const feedback = document.getElementById('feedback');
+    let canvasWidth = window.innerWidth - 300; // 减去记录面板宽度
+    let canvasHeight = window.innerHeight;
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+
+    // 2. 爱心属性
+    const heart = {
+        x: canvasWidth / 2,
+        y: canvasHeight / 2,
+        size: 80,
+        scale: 1.0,
+        growing: true,
+        speed: 0.015,
+        colorIndex: 0,
+        colors: [
+            'rgba(255,130,171,0.9)', // 柔和粉
+            'rgba(255,105,180,0.9)', // 玫瑰粉
+            'rgba(218,112,214,0.9)', // 粉紫
+            'rgba(186,85,247,0.9)',  // 紫罗兰
+            'rgba(138,43,226,0.9)'   // 深紫
+        ]
+    };
+
+    // 3. 问答数据（开放式问题）
+    const questions = [
+        {
+            question: "我们可以约定每年要一起做的事，你希望是?",
+            feedbacks: ["这个约定好浪漫！我已经开始期待了~", "好喜欢这个想法，我们一定要坚持呀！", "太棒了，这会成为我们专属的回忆"]
+        },
+        {
+            question: "如果我们有一天空闲时间，你最想和我去哪里?",
+            feedbacks: ["这个地方听起来就很美好，我们尽快安排吧！", "我也超想去这里，和你一起一定很开心~", "有你的地方都好，尤其是这里！"]
+        },
+        {
+            question: "我做过最让你心动的一件事是什么?",
+            feedbacks: ["原来这件事让你这么心动，我以后会多做呀~", "听到这个我好开心，其实我也记得很清楚！", "没想到这件事对你这么重要，我会一直记得"]
+        },
+        {
+            question: "如果我们养宠物，你想给它起什么名字?",
+            feedbacks: ["这个名字好可爱，和我们很配！", "我也喜欢这个名字，感觉宠物会很喜欢~", "太有创意了，就这么定啦！"]
+        },
+        {
+            question: "你希望我们老了之后，每天的生活是什么样的?",
+            feedbacks: ["这样的晚年生活好温馨，我好期待和你一起变老~", "和你一起这样生活，就是我最想要的未来！", "想想都觉得幸福，我们要一起努力呀！"]
+        }
+    ];
+    let usedQuestionIndices = []; // 已使用的问题索引
+    let questionAnswers = [];     // 存储问题和回答
+
+    // 4. 粒子系统
+    let particles = [];
+    class Particle {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.size = Math.random() * 3 + 1;
+            this.color = heart.colors[heart.colorIndex];
+            this.vx = (Math.random() - 0.5) * 5;
+            this.vy = (Math.random() - 0.5) * 5;
+            this.alpha = 1;
+            this.life = Math.random() * 30 + 20;
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vy += 0.04; // 重力
+            this.life--;
+            this.alpha = this.life / 50;
+        }
+        draw() {
+            ctx.save();
+            ctx.globalAlpha = this.alpha;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // 5. 核心函数
+    // 绘制爱心（贝塞尔曲线实现）
+    function drawHeart() {
+        ctx.save();
+        ctx.translate(heart.x, heart.y);
+        ctx.scale(heart.scale, heart.scale);
+
+        ctx.beginPath();
+        ctx.moveTo(0, -heart.size / 2);
+        // 左半爱心
+        ctx.bezierCurveTo(
+            -heart.size / 2, -heart.size,
+            -heart.size, -heart.size / 4,
+            0, heart.size / 2
+        );
+        // 右半爱心
+        ctx.bezierCurveTo(
+            heart.size, -heart.size / 4,
+            heart.size / 2, -heart.size,
+            0, -heart.size / 2
+        );
+        ctx.fillStyle = heart.colors[heart.colorIndex];
+        ctx.fill();
+        ctx.restore();
+
+        // 爱心中心文字
+        ctx.save();
+        ctx.translate(heart.x, heart.y);
+        ctx.fillStyle = '#fff';
+        ctx.font = '24px PingFang SC';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(getRandomLoveText(), 0, 5);
+        ctx.restore();
+    }
+
+    // 随机浪漫文字
+    function getRandomLoveText() {
+        const texts = ['爱', 'LOVE', '❤️', '甜蜜', '在一起', '珍惜', '陪伴'];
+        return texts[Math.floor(Math.random() * texts.length)];
+    }
+
+    // 生成粒子
+    function createParticles(x, y) {
+        for (let i = 0; i < 30; i++) {
+            particles.push(new Particle(x, y));
+        }
+    }
+
+    // 更新粒子
+    function updateParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            particles[i].draw();
+            if (particles[i].life <= 0) {
+                particles.splice(i, 1);
+            }
+        }
+    }
+
+    // 定时更换爱心颜色（15秒，和原程序一致）
+    setInterval(() => {
+        heart.colorIndex = (heart.colorIndex + 1) % heart.colors.length;
+    }, 15000);
+
+    // 触发开放式问答
+    function startOpenQuestion() {
+        if (questions.length === 0) return;
+
+        // 选择未使用的问题
+        let questionIndex;
+        if (usedQuestionIndices.length < questions.length) {
+            do {
+                questionIndex = Math.floor(Math.random() * questions.length);
+            } while (usedQuestionIndices.includes(questionIndex));
+            usedQuestionIndices.push(questionIndex);
+        } else {
+            // 所有问题用完，随机选择并重置
+            questionIndex = Math.floor(Math.random() * questions.length);
+            if (questionIndex === questions.length - 1) {
+                usedQuestionIndices = [];
+            }
+        }
+
+        const question = questions[questionIndex];
+        // iOS 原生输入框（alert 改为 prompt 实现输入）
+        const userAnswer = prompt(question.question, "我觉得...");
+
+        if (userAnswer && userAnswer.trim() !== "") {
+            // 保存问题和回答
+            const qa = { question: question.question, answer: userAnswer.trim() };
+            questionAnswers.push(qa);
+            // 更新记录面板
+            updateAnswerRecord(qa);
+            // 显示随机反馈
+            const randomFeedback = question.feedbacks[Math.floor(Math.random() * question.feedbacks.length)];
+            showFeedback(randomFeedback);
+            // 生成庆祝粒子
+            createParticles(heart.x, heart.y);
+        } else if (userAnswer !== null) {
+            showFeedback("看来你还没想好呀，没关系，我们可以慢慢聊~");
+        }
+    }
+
+    // 更新回答记录
+    function updateAnswerRecord(qa) {
+        const recordItem = document.createElement('div');
+        recordItem.className = 'record-item';
+        recordItem.innerHTML = `
+                <div class="record-question">Q: ${qa.question}</div>
+                <div class="record-answer">A: ${qa.answer}</div>
+            `;
+        answerRecord.prepend(recordItem); // 新记录插在最前面
+    }
+
+    // 显示反馈文字
+    function showFeedback(text) {
+        feedback.textContent = text;
+        feedback.style.opacity = 1;
+        setTimeout(() => {
+            feedback.style.opacity = 0;
+        }, 3000); // 3秒后消失
+    }
+
+    // 6. 动画循环
+    function animate() {
+        // 清空画布
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // 更新爱心大小（呼吸效果）
+        if (heart.growing) {
+            heart.scale += heart.speed;
+            if (heart.scale >= 1.2) heart.growing = false;
+        } else {
+            heart.scale -= heart.speed;
+            if (heart.scale <= 0.9) heart.growing = true;
+        }
+
+        // 绘制和更新元素
+        drawHeart();
+        updateParticles();
+
+        requestAnimationFrame(animate);
+    }
+    animate();
+
+    // 7. 事件监听（适配 iOS 触摸）
+    // 点击屏幕触发问答
+    canvas.addEventListener('touchstart', (e) => {
+        const touch = e.touches[0];
+        const x = touch.clientX;
+        const y = touch.clientY;
+        // 判断是否点击在画布内（排除记录面板）
+        if (x < canvasWidth) {
+            startOpenQuestion();
+            createParticles(x, y);
+        }
+    });
+
+    // 长按画布更换爱心颜色（补充原双击功能）
+    let longPressTimer;
+    canvas.addEventListener('touchstart', () => {
+        longPressTimer = setTimeout(() => {
+            heart.colorIndex = (heart.colorIndex + 1) % heart.colors.length;
+            showFeedback("换个颜色，换种心情~");
+        }, 800); // 长按800ms触发
+    });
+    canvas.addEventListener('touchend', () => {
+        clearTimeout(longPressTimer);
+    });
+
+    // 窗口大小适配
+    window.addEventListener('resize', () => {
+        canvasWidth = window.innerWidth - 300;
+        canvasHeight = window.innerHeight;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        heart.x = canvasWidth / 2;
+        heart.y = canvasHeight / 2;
+    });
+
+    // 8. 初始提示
+    setTimeout(() => {
+        showFeedback("亲爱的，很高兴和你一起开启这段互动~");
+    }, 1000);
+</script>
+</body>
+</html>
